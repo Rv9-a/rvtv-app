@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RVTV - نظام البث المزدوج</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <header class="glass border-b border-slate-800 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <i class="fa-solid fa-play-circle text-blue-500 text-2xl"></i>
+                <h1 class="font-bold text-xl tracking-wide bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">RVTV DUAL STREAM</h1>
+            </div>
+            
+            <div id="userInfo" class="hidden flex items-center gap-4">
+                <span class="text-sm text-slate-400"><i class="fa-solid fa-user text-blue-400 ml-1"></i> <span id="usernameDisplay" class="font-bold text-slate-200"></span></span>
+                <div class="flex items-center gap-2 bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700 text-xs">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>المشاهدون: <strong id="viewersCount" class="text-blue-400">0</strong></span>
+                </div>
+                <button onclick="logout()" class="bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white px-3 py-1.5 rounded-xl border border-rose-500/30 text-xs transition"><i class="fa-solid fa-right-from-bracket ml-1"></i> خروج</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- تسجيل الدخول -->
+    <div id="loginSection" class="flex-1 flex items-center justify-center p-4">
+        <div class="glass border border-slate-800 p-8 rounded-3xl w-full max-w-md space-y-6">
+            <div class="text-center space-y-2">
+                <i class="fa-solid fa-lock text-4xl text-blue-500"></i>
+                <h2 class="text-xl font-bold">تسجيل الدخول</h2>
+            </div>
+            <form onsubmit="handleLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">اسم المستخدم</label>
+                    <input type="text" id="loginUsername" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">كلمة المرور</label>
+                    <input type="password" id="loginPassword" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl transition text-sm">دخول</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- التطبيق الرئيسية -->
+    <main id="appSection" class="hidden max-w-7xl mx-auto px-4 py-6 flex-1 w-full space-y-6">
+        
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <!-- مشغل الفيديو -->
+            <div class="lg:col-span-3 space-y-3">
+                <div class="relative aspect-video bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-2xl">
+                    <video id="videoPlayer" controls autoplay class="w-full h-full object-contain"></video>
+                </div>
+                <div class="flex justify-between items-center px-2">
+                    <h3 id="currentChannelTitle" class="font-bold text-lg text-slate-200">البث الرئيسي (Restream)</h3>
+                </div>
+            </div>
+
+            <!-- قائمة التنقل -->
+            <div class="glass border border-slate-800 rounded-2xl p-4 flex flex-col h-[450px]">
+                <h3 class="font-bold text-sm mb-3 text-slate-300 border-b border-slate-800 pb-2"><i class="fa-solid fa-list-ul ml-2 text-blue-400"></i>مشاهدة البثوث</h3>
+                <div class="space-y-2 pr-1 flex-1 overflow-y-auto">
+                    <!-- البث الرئيسي ثابت -->
+                    <button onclick="playStream('/live.m3u8', 'البث الرئيسي (Restream)')" class="w-full text-right p-3 rounded-xl bg-blue-900/30 hover:bg-blue-800/40 border border-blue-500/30 transition flex items-center justify-between mb-2">
+                        <span class="font-bold text-sm text-blue-200"><i class="fa-solid fa-tower-broadcast ml-1"></i> البث الرئيسي</span>
+                        <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                    </button>
+                    <div class="border-t border-slate-800 my-2"></div>
+                    <div id="userChannelsList" class="space-y-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- لوحة تحكم الأدمن المدمجة -->
+        <div id="adminPanel" class="hidden space-y-6 pt-6 border-t border-slate-800">
+            <h2 class="text-xl font-bold text-blue-400 flex items-center gap-2"><i class="fa-solid fa-user-shield"></i> لوحة التحكم المدمجة</h2>
+
+            <!-- 1. التحكم بـ Restream الرئيسي -->
+            <div class="glass p-5 rounded-2xl border border-indigo-500/30 space-y-4">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <h4 class="font-bold text-sm text-indigo-300"><i class="fa-solid fa-server ml-2"></i>التحكم بـ Restream الرئيسي (Systemd)</h4>
+                    <span id="restreamStatus" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-400">جاري التحقق...</span>
+                </div>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <input type="text" id="restreamUrlInput" placeholder="رابط مصدر Restream الجديد..." class="flex-1 bg-slate-900 border border-slate-700 text-sm rounded-xl px-4 py-2">
+                    <button onclick="changeRestreamUrl()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl px-4 py-2 transition"><i class="fa-solid fa-rotate ml-1"></i> تغيير الرابط وتشغيل</button>
+                    <button onclick="startRestream()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl px-4 py-2 transition"><i class="fa-solid fa-play ml-1"></i> تشغيل</button>
+                    <button onclick="stopRestream()" class="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl px-4 py-2 transition"><i class="fa-solid fa-stop ml-1"></i> إيقاف وقطع</button>
+                </div>
+            </div>
+
+            <!-- 2. التحكم بالقنوات التقسيمية (PM2) -->
+            <div class="glass p-5 rounded-2xl border border-slate-800 space-y-4">
+                <h4 class="font-bold text-sm text-slate-200 border-b border-slate-800 pb-2"><i class="fa-solid fa-tv ml-2"></i>إدارة القنوات التقسيمية (PM2)</h4>
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
+                    <input type="text" id="chId" placeholder="المعرف (مثال: ch1)" class="md:col-span-3 bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2">
+                    <input type="text" id="chName" placeholder="اسم القناة" class="md:col-span-3 bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2">
+                    <input type="text" id="chUrl" placeholder="رابط Stream M3U8/TS..." class="md:col-span-4 bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2">
+                    <button onclick="addChannel()" class="md:col-span-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl py-2 transition"><i class="fa-solid fa-plus ml-1"></i> إضافة</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-right text-slate-400">
+                        <thead class="text-xs text-slate-500 border-b border-slate-800">
+                            <tr>
+                                <th class="py-2 px-3">المعرف</th>
+                                <th class="py-2 px-3">الاسم</th>
+                                <th class="py-2 px-3">الحالة</th>
+                                <th class="py-2 px-3 text-left">التحكم</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminChannelsTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 3. المستخدمين -->
+            <div class="glass p-5 rounded-2xl border border-slate-800 space-y-4">
+                <h4 class="font-bold text-sm text-slate-200 border-b border-slate-800 pb-2"><i class="fa-solid fa-users ml-2"></i>إدارة الحسابات</h4>
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
+                    <input type="text" id="newUsername" placeholder="اسم المستخدم" class="md:col-span-4 bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2">
+                    <input type="password" id="newPassword" placeholder="كلمة المرور" class="md:col-span-4 bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2">
+                    <select id="newRole" class="md:col-span-2 bg-slate-900 border border-slate-700 text-sm rounded-xl px-3 py-2">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                    <button onclick="addUser()" class="md:col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl py-2 transition"><i class="fa-solid fa-user-plus ml-1"></i> إضافة</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-right text-slate-400">
+                        <thead class="text-xs text-slate-500 border-b border-slate-800">
+                            <tr>
+                                <th class="py-2 px-3">اسم المستخدم</th>
+                                <th class="py-2 px-3">الرتبة</th>
+                                <th class="py-2 px-3 text-left">إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminUsersTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const socket = io();
+        let hlsPlayer = null;
+        let currentUser = null;
+
+        socket.on('stats', data => {
+            document.getElementById('viewersCount').innerText = data.viewers;
+        });
+
+        window.onload = async () => {
+            try {
+                const res = await fetch('/api/me');
+                if (res.ok) {
+                    currentUser = await res.json();
+                    showApp();
+                }
+            } catch (e) {}
+        };
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            if (res.ok) {
+                currentUser = await res.json();
+                showApp();
+            } else {
+                alert((await res.json()).error || 'خطأ في تسجيل الدخول');
+            }
+        }
+
+        async function logout() {
+            await fetch('/api/logout', { method: 'POST' });
+            location.reload();
+        }
+
+        function showApp() {
+            document.getElementById('loginSection').classList.add('hidden');
+            document.getElementById('appSection').classList.remove('hidden');
+            document.getElementById('userInfo').classList.remove('hidden');
+            document.getElementById('usernameDisplay').innerText = currentUser.username;
+
+            loadUserChannels();
+            playStream('/live.m3u8', 'البث الرئيسي (Restream)');
+
+            if (currentUser.role === 'admin') {
+                document.getElementById('adminPanel').classList.remove('hidden');
+                checkRestreamStatus();
+                loadAdminChannels();
+                loadAdminUsers();
+            }
+        }
+
+        function playStream(url, title) {
+            document.getElementById('currentChannelTitle').innerText = title;
+            const video = document.getElementById('videoPlayer');
+
+            if (Hls.isSupported()) {
+                if (hlsPlayer) hlsPlayer.destroy();
+                hlsPlayer = new Hls({ manifestLoadingTimeOut: 15000 });
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = url;
+                video.play();
+            }
+        }
+
+        // Restream Logic
+        async function checkRestreamStatus() {
+            const res = await fetch('/api/admin/stream-status');
+            if (res.ok) {
+                const data = await res.json();
+                const badge = document.getElementById('restreamStatus');
+                badge.innerText = data.active ? 'شغال (Active)' : 'متوقف (Inactive)';
+                badge.className = `px-2.5 py-0.5 rounded-full text-xs font-bold ${data.active ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`;
+            }
+        }
+
+        async function startRestream() {
+            const res = await fetch('/api/admin/start-stream', { method: 'POST' });
+            alert((await res.json()).message || (await res.json()).error);
+            checkRestreamStatus();
+        }
+
+        async function stopRestream() {
+            const res = await fetch('/api/admin/stop-stream', { method: 'POST' });
+            alert((await res.json()).message || (await res.json()).error);
+            checkRestreamStatus();
+        }
+
+        async function changeRestreamUrl() {
+            const streamUrl = document.getElementById('restreamUrlInput').value.trim();
+            if (!streamUrl) return alert('أدخل الرابط أولاً');
+
+            const res = await fetch('/api/admin/change-stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ streamUrl })
+            });
+            alert((await res.json()).message || (await res.json()).error);
+            checkRestreamStatus();
+        }
+
+        // Channels Logic
+        async function loadUserChannels() {
+            const res = await fetch('/api/channels');
+            if (res.ok) {
+                const channels = await res.json();
+                const container = document.getElementById('userChannelsList');
+                container.innerHTML = channels.map(ch => `
+                    <button onclick="playStream('/channels/${ch.id}.m3u8', '${ch.name}')" class="w-full text-right p-3 rounded-xl bg-slate-900/50 hover:bg-slate-800 border border-slate-800/80 transition flex items-center justify-between">
+                        <span class="font-bold text-sm text-slate-200">${ch.name}</span>
+                        <span class="w-2 h-2 rounded-full ${ch.active ? 'bg-emerald-500' : 'bg-slate-600'}"></span>
+                    </button>
+                `).join('');
+            }
+        }
+
+        async function loadAdminChannels() {
+            const res = await fetch('/api/admin/channels');
+            if (res.ok) {
+                const channels = await res.json();
+                const tbody = document.getElementById('adminChannelsTable');
+                tbody.innerHTML = channels.map(ch => `
+                    <tr class="border-b border-slate-800/50">
+                        <td class="py-2.5 px-3 font-mono text-xs text-blue-400">${ch.id}</td>
+                        <td class="py-2.5 px-3 font-bold text-slate-200">${ch.name}</td>
+                        <td class="py-2.5 px-3">
+                            <span class="px-2 py-0.5 rounded text-xs font-bold ${ch.active ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}">
+                                ${ch.active ? 'شغالة' : 'متوقفة'}
+                            </span>
+                        </td>
+                        <td class="py-2.5 px-3 text-left space-x-2 space-x-reverse">
+                            ${ch.active 
+                                ? `<button onclick="stopChannel('${ch.id}')" class="bg-rose-600/80 hover:bg-rose-600 text-white px-2.5 py-1 rounded-lg text-xs transition"><i class="fa-solid fa-stop"></i> إيقاف</button>`
+                                : `<button onclick="startChannel('${ch.id}')" class="bg-emerald-600/80 hover:bg-emerald-600 text-white px-2.5 py-1 rounded-lg text-xs transition"><i class="fa-solid fa-play"></i> تشغيل</button>`
+                            }
+                            <button onclick="deleteChannel('${ch.id}')" class="text-rose-400 hover:text-rose-300 text-xs px-2 py-1"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        async function loadAdminUsers() {
+            const res = await fetch('/api/admin/users');
+            if (res.ok) {
+                const users = await res.json();
+                const tbody = document.getElementById('adminUsersTable');
+                tbody.innerHTML = users.map(u => `
+                    <tr class="border-b border-slate-800/50">
+                        <td class="py-2.5 px-3 text-slate-200 font-medium">${u.username}</td>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded text-xs font-bold bg-slate-800 border border-slate-700">${u.role}</span></td>
+                        <td class="py-2.5 px-3 text-left">
+                            ${u.username !== 'admin' ? `<button onclick="deleteUser('${u.username}')" class="text-rose-400 hover:text-rose-300 text-xs px-2 py-1"><i class="fa-solid fa-trash"></i> حذف</button>` : ''}
+                        </td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        async function addChannel() {
+            const id = document.getElementById('chId').value.trim();
+            const name = document.getElementById('chName').value.trim();
+            const url = document.getElementById('chUrl').value.trim();
+            if (!id || !name || !url) return alert('يرجى ملء كافة حقول القناة');
+
+            const res = await fetch('/api/admin/channels', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, name, url })
+            });
+            if (res.ok) {
+                document.getElementById('chId').value = '';
+                document.getElementById('chName').value = '';
+                document.getElementById('chUrl').value = '';
+                loadAdminChannels();
+                loadUserChannels();
+            } else alert((await res.json()).error);
+        }
+
+        async function startChannel(id) {
+            const res = await fetch(`/api/admin/channels/${id}/start`, { method: 'POST' });
+            alert((await res.json()).message || (await res.json()).error);
+            loadAdminChannels();
+            loadUserChannels();
+        }
+
+        async function stopChannel(id) {
+            const res = await fetch(`/api/admin/channels/${id}/stop`, { method: 'POST' });
+            alert((await res.json()).message || (await res.json()).error);
+            loadAdminChannels();
+            loadUserChannels();
+        }
+
+        async function deleteChannel(id) {
+            if (!confirm('هل أنت تأكد من الحذف؟')) return;
+            const res = await fetch(`/api/admin/channels/${id}`, { method: 'DELETE' });
+            alert((await res.json()).message || (await res.json()).error);
+            loadAdminChannels();
+            loadUserChannels();
+        }
+
+        async function addUser() {
+            const username = document.getElementById('newUsername').value.trim();
+            const password = document.getElementById('newPassword').value.trim();
+            const role = document.getElementById('newRole').value;
+            if (!username || !password) return alert('يرجى إدخال البيانات');
+
+            const res = await fetch('/api/admin/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role })
+            });
+            if (res.ok) {
+                document.getElementById('newUsername').value = '';
+                document.getElementById('newPassword').value = '';
+                loadAdminUsers();
+            } else alert((await res.json()).error);
+        }
+
+        async function deleteUser(username) {
+            if (!confirm('هل أنت تأكد من حذف هذا المستخدم؟')) return;
+            const res = await fetch(`/api/admin/users/${username}`, { method: 'DELETE' });
+            if (res.ok) loadAdminUsers();
+            else alert((await res.json()).error);
+        }
+    </script>
+</body>
+</html>
